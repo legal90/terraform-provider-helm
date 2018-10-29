@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,11 +30,14 @@ var ErrReleaseNotFound = errors.New("release not found")
 
 func resourceRelease() *schema.Resource {
 	return &schema.Resource{
-		Create:        resourceReleaseCreate,
-		Read:          resourceReleaseRead,
-		Delete:        resourceReleaseDelete,
-		Update:        resourceReleaseUpdate,
-		Exists:        resourceReleaseExists,
+		Create: resourceReleaseCreate,
+		Read:   resourceReleaseRead,
+		Delete: resourceReleaseDelete,
+		Update: resourceReleaseUpdate,
+		Exists: resourceReleaseExists,
+		Importer: &schema.ResourceImporter{
+			State: resourceReleaseImportState,
+		},
 		CustomizeDiff: resourceDiff,
 		Schema: map[string]*schema.Schema{
 			"name": {
@@ -483,6 +487,40 @@ func resourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, erro
 	}
 
 	return false, err
+}
+
+func resourceReleaseImportState(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+	re, err := regexp.Compile("(?P<repository>.+)__(?P<name>.+)")
+
+	if err != nil {
+		return nil, fmt.Errorf("import is not supported. Invalid regex formats")
+	}
+
+	if fieldValues := re.FindStringSubmatch(d.Id()); fieldValues != nil {
+		for i := 1; i < len(fieldValues); i++ {
+			fieldName := re.SubexpNames()[i]
+			d.Set(fieldName, fieldValues[i])
+		}
+	}
+
+	name := d.Get("name").(string)
+	d.SetId(name)
+
+	m := meta.(*Meta)
+	c, err := m.GetHelmClient()
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := getRelease(c, name)
+	if err != nil {
+		return nil, err
+	}
+
+	setAttributesFromRelease(d, r)
+	d.Set("chart", r.Chart.Metadata.Name)
+
+	return []*schema.ResourceData{d}, nil
 }
 
 func deleteRelease(c helm.Interface, name string, disableWebhooks bool, timeout int64) error {
