@@ -1,11 +1,16 @@
-*GPII TL;DR*
+[![CircleCI](https://circleci.com/gh/gpii-ops/terraform-provider-helm.svg?style=svg)](https://circleci.com/gh/gpii-ops/terraform-provider-helm)
+
+**GPII TL;DR** 
 
 This is a fork of
-https://github.com/terraform-providers/terraform-provider-helm.
+[Terrafrom Helm provider](https://github.com/terraform-providers/terraform-provider-helm).
 
-Creating a new release - create a git tag in form `v1.2.3`, this will trigger
-CircleCI pipeline (https://circleci.com/gh/gpii-ops/terraform-provider-helm)
-that will cut a GH release and publish built binaries (see releases tab).
+Creating a new release:
+- Create a git tag in form `v1.2.3` and push to this repo
+- This will trigger [CircleCI pipeline](https://circleci.com/gh/gpii-ops/terraform-provider-helm)
+that will cut a GitHub release and publish built binaries (see [releases](https://github.com/gpii-ops/terraform-provider-helm/releases) tab)
+
+---
 
 Terraform Provider for Helm [![Build Status](https://travis-ci.org/mcuadros/terraform-provider-helm.svg?branch=v0.4.0)](https://travis-ci.org/mcuadros/terraform-provider-helm) [![GitHub release](https://img.shields.io/github/release/terraform-providers/terraform-provider-helm.svg)](https://github.com/terraform-providers/terraform-provider-helm/releases) [![license](https://img.shields.io/github/license/terraform-providers/terraform-provider-helm.svg)]()
 ===========================
