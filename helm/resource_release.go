@@ -166,6 +166,13 @@ func resourceRelease() *schema.Resource {
 				Default:     true,
 				Description: "Will wait until all resources are in a ready state before marking the release as successful.",
 			},
+			"status": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				Default:      release.Status_DEPLOYED.String(),
+				Description:  "Status of the release.",
+				ValidateFunc: validateStatus,
+			},
 			"metadata": {
 				Type:        schema.TypeSet,
 				Computed:    true,
@@ -186,11 +193,6 @@ func resourceRelease() *schema.Resource {
 							Type:        schema.TypeString,
 							Computed:    true,
 							Description: "Namespace is the kubernetes namespace of the release.",
-						},
-						"status": {
-							Type:        schema.TypeString,
-							Computed:    true,
-							Description: "Status of the release.",
 						},
 						"chart": {
 							Type:        schema.TypeString,
@@ -339,12 +341,12 @@ func setIDAndMetadataFromRelease(d *schema.ResourceData, r *release.Release) err
 	d.SetId(r.Name)
 	d.Set("version", r.Chart.Metadata.Version)
 	d.Set("namespace", r.Namespace)
+	d.Set("status", r.GetInfo().GetStatus().GetCode().String())
 
 	return d.Set("metadata", []map[string]interface{}{{
 		"name":      r.Name,
 		"revision":  r.Version,
 		"namespace": r.Namespace,
-		"status":    r.Info.Status.Code.String(),
 		"chart":     r.Chart.Metadata.Name,
 		"version":   r.Chart.Metadata.Version,
 		"values":    r.Config.Raw,
@@ -764,4 +766,12 @@ func checkDependencies(ch *chart.Chart, reqs *chartutil.Requirements) error {
 		return fmt.Errorf("found in requirements.yaml, but missing in charts/ directory: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// Validates Status attribute - at the moment the only allowed value is DEPLOYED
+func validateStatus(val interface{}, key string) (warns []string, errs []error) {
+	if val.(string) != release.Status_DEPLOYED.String() {
+		errs = append(errs, fmt.Errorf("the only allowed value for %s is DEPLOYED (instead of %s)", key, val))
+	}
+	return
 }
