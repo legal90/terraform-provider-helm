@@ -167,11 +167,9 @@ func resourceRelease() *schema.Resource {
 				Description: "Will wait until all resources are in a ready state before marking the release as successful.",
 			},
 			"status": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Default:      release.Status_DEPLOYED.String(),
-				Description:  "Status of the release.",
-				ValidateFunc: validateStatus,
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "Status of the release.",
 			},
 			"metadata": {
 				Type:        schema.TypeSet,
@@ -271,10 +269,20 @@ func prepareTillerForNewRelease(d *schema.ResourceData, c helm.Interface, name s
 }
 
 func resourceDiff(d *schema.ResourceDiff, meta interface{}) error {
+	// Get version from the release metadata
 	c, _, err := getChart(d, meta.(*Meta))
-	if err == nil {
-		return d.SetNew("version", c.Metadata.Version)
+	if err != nil {
+		return err
 	}
+	if err := d.SetNew("version", c.Metadata.Version); err != nil {
+		return err
+	}
+
+	// Set the desired status to DEPLOYED
+	if err := d.SetNew("status", release.Status_DEPLOYED.String()); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -341,7 +349,7 @@ func setIDAndMetadataFromRelease(d *schema.ResourceData, r *release.Release) err
 	d.SetId(r.Name)
 	d.Set("version", r.Chart.Metadata.Version)
 	d.Set("namespace", r.Namespace)
-	d.Set("status", r.GetInfo().GetStatus().GetCode().String())
+	d.Set("status", r.Info.Status.Code.String())
 
 	return d.Set("metadata", []map[string]interface{}{{
 		"name":      r.Name,
@@ -766,12 +774,4 @@ func checkDependencies(ch *chart.Chart, reqs *chartutil.Requirements) error {
 		return fmt.Errorf("found in requirements.yaml, but missing in charts/ directory: %s", strings.Join(missing, ", "))
 	}
 	return nil
-}
-
-// Validates Status attribute - at the moment the only allowed value is DEPLOYED
-func validateStatus(val interface{}, key string) (warns []string, errs []error) {
-	if val.(string) != release.Status_DEPLOYED.String() {
-		errs = append(errs, fmt.Errorf("the only allowed value for %s is DEPLOYED (instead of %s)", key, val))
-	}
-	return
 }
