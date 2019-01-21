@@ -203,6 +203,16 @@ func TestAccResourceRelease_updateMultipleValues(t *testing.T) {
 				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
 				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: baz\n"),
 			),
+		}, {
+			Config: testAccHelmReleaseConfigValues(
+				testResourceName, testNamespace, "test-update-multiple-values",
+				"stable/kibana", []string{"foo: baz"},
+			),
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "2"),
+				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: baz\n"),
+			),
 		}},
 	})
 }
