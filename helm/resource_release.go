@@ -28,16 +28,16 @@ import (
 // ErrReleaseNotFound is the error when a Helm release is not found
 var ErrReleaseNotFound = errors.New("release not found")
 
-// This is used to escape commas which are not escaped in set_string
-var nonEscapedCommaRegexp = regexp.MustCompile(`([^\\]),`)
-
 func resourceRelease() *schema.Resource {
 	return &schema.Resource{
-		Create:        resourceReleaseCreate,
-		Read:          resourceReleaseRead,
-		Delete:        resourceReleaseDelete,
-		Update:        resourceReleaseUpdate,
-		Exists:        resourceReleaseExists,
+		Create: resourceReleaseCreate,
+		Read:   resourceReleaseRead,
+		Delete: resourceReleaseDelete,
+		Update: resourceReleaseUpdate,
+		Exists: resourceReleaseExists,
+		Importer: &schema.ResourceImporter{
+			State: resourceReleaseImportState,
+		},
 		CustomizeDiff: resourceDiff,
 		Schema: map[string]*schema.Schema{
 			"name": {
@@ -74,7 +74,7 @@ func resourceRelease() *schema.Resource {
 			"values": {
 				Type:        schema.TypeList,
 				Optional:    true,
-				Description: "List of values in raw yaml format to pass to helm.",
+				Description: "List of values in raw yaml file to pass to helm.",
 				Elem:        &schema.Schema{Type: schema.TypeString},
 			},
 			"set": {
@@ -199,6 +199,13 @@ func resourceRelease() *schema.Resource {
 				Computed:    true,
 				Description: "Status of the release.",
 			},
+			"overrides": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "The result YAML file got by merging all passed `set`, `set_string`, `set_sensitive` and `values`",
+				// Mark as sensitive to avoid printing the diff, as it might contain sensitive data
+				Sensitive: true,
+			},
 			"metadata": {
 				Type:        schema.TypeList,
 				Computed:    true,
@@ -230,11 +237,6 @@ func resourceRelease() *schema.Resource {
 							Computed:    true,
 							Description: "A SemVer 2 conformant version string of the chart.",
 						},
-						"values": {
-							Type:        schema.TypeString,
-							Computed:    true,
-							Description: "The raw yaml values used for the chart.",
-						},
 					},
 				},
 			},
@@ -262,7 +264,7 @@ func prepareTillerForNewRelease(d *schema.ResourceData, c helm.Interface, name s
 
 		switch r.Info.Status.GetCode() {
 		case release.Status_DEPLOYED:
-			return setIDAndMetadataFromRelease(d, r)
+			return setAttributesFromRelease(d, r)
 		case release.Status_FAILED:
 			// delete and recreate it
 			debug("release %s status is FAILED deleting it", name)
@@ -297,10 +299,18 @@ func prepareTillerForNewRelease(d *schema.ResourceData, c helm.Interface, name s
 }
 
 func resourceDiff(d *schema.ResourceDiff, meta interface{}) error {
-
 	// Always set desired state to DEPLOYED
 	err := d.SetNew("status", release.Status_DEPLOYED.String())
 	if err != nil {
+		return err
+	}
+
+	// Compute "overrides" by merging all "values", "set", "set_string" and "set_sensitive" attributes
+	values, err := getValues(d)
+	if err != nil {
+		return err
+	}
+	if err := d.SetNew("overrides", string(values)); err != nil {
 		return err
 	}
 
@@ -316,7 +326,6 @@ func resourceDiff(d *schema.ResourceDiff, meta interface{}) error {
 	} else {
 		return d.SetNewComputed("version")
 	}
-
 }
 
 func resourceReleaseCreate(d *schema.ResourceData, meta interface{}) error {
@@ -336,10 +345,7 @@ func resourceReleaseCreate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	values, err := getValues(d)
-	if err != nil {
-		return err
-	}
+	values := []byte(d.Get("overrides").(string))
 
 	opts := []helm.InstallOption{
 		helm.ReleaseName(d.Get("name").(string)),
@@ -356,7 +362,7 @@ func resourceReleaseCreate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	return setIDAndMetadataFromRelease(d, res.Release)
+	return setAttributesFromRelease(d, res.Release)
 }
 
 func resourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
@@ -375,14 +381,15 @@ func resourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
 
 	//  d.Set("values_source_detected_md5", d.Get("values_sources_md5"))
 
-	return setIDAndMetadataFromRelease(d, r)
+	return setAttributesFromRelease(d, r)
 }
 
-func setIDAndMetadataFromRelease(d *schema.ResourceData, r *release.Release) error {
+func setAttributesFromRelease(d *schema.ResourceData, r *release.Release) error {
 	d.SetId(r.Name)
 	d.Set("version", r.Chart.Metadata.Version)
 	d.Set("namespace", r.Namespace)
 	d.Set("status", r.Info.Status.Code.String())
+	d.Set("overrides", r.Config.Raw)
 
 	return d.Set("metadata", []map[string]interface{}{{
 		"name":      r.Name,
@@ -390,17 +397,30 @@ func setIDAndMetadataFromRelease(d *schema.ResourceData, r *release.Release) err
 		"namespace": r.Namespace,
 		"chart":     r.Chart.Metadata.Name,
 		"version":   r.Chart.Metadata.Version,
-		"values":    r.Config.Raw,
 	}})
 }
 
 func resourceReleaseUpdate(d *schema.ResourceData, meta interface{}) error {
 	m := meta.(*Meta)
+	name := d.Get("name").(string)
 
-	values, err := getValues(d)
-	if err != nil {
-		return err
+	// Update the release only if any of values, chart name/repository/version, status or reuse_values are changed
+	// OR any of recreate_pods or force_update are set to true:
+	needsUpdate := d.HasChange("overrides") ||
+		d.HasChange("chart") ||
+		d.HasChange("repository") ||
+		d.HasChange("version") ||
+		d.HasChange("status") ||
+		d.HasChange("reuse_values") ||
+		d.Get("recreate_pods").(bool) ||
+		d.Get("force_update").(bool)
+
+	if !needsUpdate {
+		log.Printf("[DEBUG] Helm release %s doesn't require an update. Skipping...", name)
+		return nil
 	}
+
+	values := []byte(d.Get("overrides").(string))
 
 	_, path, err := getChart(d, m)
 	if err != nil {
@@ -422,13 +442,12 @@ func resourceReleaseUpdate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	name := d.Get("name").(string)
 	res, err := c.UpdateRelease(name, path, opts...)
 	if err != nil {
 		return err
 	}
 
-	return setIDAndMetadataFromRelease(d, res.Release)
+	return setAttributesFromRelease(d, res.Release)
 }
 
 func resourceReleaseDelete(d *schema.ResourceData, meta interface{}) error {
@@ -466,6 +485,40 @@ func resourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, erro
 	}
 
 	return false, err
+}
+
+func resourceReleaseImportState(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+	re, err := regexp.Compile("(?P<repository>.+)__(?P<name>.+)")
+
+	if err != nil {
+		return nil, fmt.Errorf("import is not supported. Invalid regex formats")
+	}
+
+	if fieldValues := re.FindStringSubmatch(d.Id()); fieldValues != nil {
+		for i := 1; i < len(fieldValues); i++ {
+			fieldName := re.SubexpNames()[i]
+			d.Set(fieldName, fieldValues[i])
+		}
+	}
+
+	name := d.Get("name").(string)
+	d.SetId(name)
+
+	m := meta.(*Meta)
+	c, err := m.GetHelmClient()
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := getRelease(c, name)
+	if err != nil {
+		return nil, err
+	}
+
+	setAttributesFromRelease(d, r)
+	d.Set("chart", r.Chart.Metadata.Name)
+
+	return []*schema.ResourceData{d}, nil
 }
 
 func deleteRelease(c helm.Interface, name string, disableWebhooks bool, timeout int64) error {
@@ -560,7 +613,9 @@ func mergeValues(dest map[string]interface{}, src map[string]interface{}) map[st
 	return dest
 }
 
-func getValues(d *schema.ResourceData) ([]byte, error) {
+// getValues merges values from YAML documents specified via "values" attributes and
+// strvals passed via "set", "set_sensitive" and "set_string" in the order mentioned.
+func getValues(d resourceGetter) ([]byte, error) {
 	base := map[string]interface{}{}
 
 	for _, raw := range d.Get("values").([]interface{}) {
@@ -581,7 +636,6 @@ func getValues(d *schema.ResourceData) ([]byte, error) {
 
 		name := set["name"].(string)
 		value := set["value"].(string)
-		value = nonEscapedCommaRegexp.ReplaceAllString(value, "$1\\,") // escape any non-escaped commas
 
 		if err := strvals.ParseInto(fmt.Sprintf("%s=%s", name, value), base); err != nil {
 			return nil, fmt.Errorf("failed parsing key %q with value %s, %s", name, value, err)
@@ -593,7 +647,6 @@ func getValues(d *schema.ResourceData) ([]byte, error) {
 
 		name := set["name"].(string)
 		value := set["value"].(string)
-		value = nonEscapedCommaRegexp.ReplaceAllString(value, "$1\\,") // escape any non-escaped commas
 
 		if err := strvals.ParseInto(fmt.Sprintf("%s=%s", name, value), base); err != nil {
 			return nil, fmt.Errorf("failed parsing key %q with sensitive value, %s", name, err)
@@ -605,7 +658,6 @@ func getValues(d *schema.ResourceData) ([]byte, error) {
 
 		name := set["name"].(string)
 		value := set["value"].(string)
-		value = nonEscapedCommaRegexp.ReplaceAllString(value, "$1\\,") // escape any non-escaped commas
 
 		if err := strvals.ParseIntoString(fmt.Sprintf("%s=%s", name, value), base); err != nil {
 			return nil, fmt.Errorf("failed parsing key %q with value %s, %s", name, value, err)

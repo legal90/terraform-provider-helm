@@ -135,33 +135,7 @@ func TestAccResourceRelease_emptyValuesList(t *testing.T) {
 			Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "1"),
 				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "{}\n"),
-			),
-		}},
-	})
-}
-
-func TestAccResourceRelease_setStringValues(t *testing.T) {
-	name := fmt.Sprintf("test-set-string-values-%s", acctest.RandString(10))
-	namespace := fmt.Sprintf("%s-%s", testNamespace, acctest.RandString(10))
-	// Delete namespace automatically created by helm after checks
-	defer deleteNamespace(t, namespace)
-
-	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckHelmReleaseDestroy(namespace),
-		Steps: []resource.TestStep{{
-			Config: testAccHelmReleaseConfigSetString(testResourceName, namespace, name, "0.6.3", "10.0.0.0/32,10.0.0.1/32,10.0.0.2/32"),
-			Check: resource.ComposeAggregateTestCheckFunc(
-				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "test: 10.0.0.0/32,10.0.0.1/32,10.0.0.2/32\n"),
-			),
-		}, {
-			Config: testAccHelmReleaseConfigSetString(testResourceName, namespace, name, "0.6.3", "10.0.0.0\\\\/32,10.0.0.1\\\\/32,10.0.0.2\\\\/32"),
-			Check: resource.ComposeAggregateTestCheckFunc(
-				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "test: 10.0.0.0/32,10.0.0.1/32,10.0.0.2/32\n"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "{}\n"),
 			),
 		}},
 	})
@@ -184,7 +158,7 @@ func TestAccResourceRelease_updateValues(t *testing.T) {
 			Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "1"),
 				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "foo: bar\n"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: bar\n"),
 			),
 		}, {
 			Config: testAccHelmReleaseConfigValues(
@@ -193,7 +167,7 @@ func TestAccResourceRelease_updateValues(t *testing.T) {
 			Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "2"),
 				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "foo: baz\n"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: baz\n"),
 			),
 		}},
 	})
@@ -217,7 +191,7 @@ func TestAccResourceRelease_updateMultipleValues(t *testing.T) {
 			Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "1"),
 				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "foo: bar\n"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: bar\n"),
 			),
 		}, {
 			Config: testAccHelmReleaseConfigValues(
@@ -227,7 +201,17 @@ func TestAccResourceRelease_updateMultipleValues(t *testing.T) {
 			Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "2"),
 				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
-				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.values", "foo: baz\n"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: baz\n"),
+			),
+		}, {
+			Config: testAccHelmReleaseConfigValues(
+				testResourceName, testNamespace, "test-update-multiple-values",
+				"stable/kibana", []string{"foo: baz"},
+			),
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("helm_release.test", "metadata.0.revision", "2"),
+				resource.TestCheckResourceAttr("helm_release.test", "status", "DEPLOYED"),
+				resource.TestCheckResourceAttr("helm_release.test", "overrides", "foo: baz\n"),
 			),
 		}},
 	})
@@ -506,23 +490,6 @@ func testAccHelmReleaseConfigBasic(resource, ns, name, version string) string {
 			}
 		}
 	`, resource, name, ns, version)
-}
-
-func testAccHelmReleaseConfigSetString(resource, ns, name, version, value string) string {
-	return fmt.Sprintf(`
-		resource "helm_release" "%s" {
- 			name      = %q
-			namespace = %q
-  			chart     = "stable/mariadb"
-			version   = %q
-
-			set_string {
-				name  = "test"
-				value =  "%s"
-			}
-
-		}
-	`, resource, name, ns, version, value)
 }
 
 func testAccHelmReleaseConfigValues(resource, ns, name, chart string, values []string) string {

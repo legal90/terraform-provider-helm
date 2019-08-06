@@ -77,24 +77,23 @@ The `set`, `set_sensitive` and `set_strings` blocks support:
 * `name` - (Required) full name of the variable to be set.
 * `value` - (Required) value of the variable to be set.
 
-Note: Unlike `--set` in `helm` command, commas in `value` blocks are supported and will not be seen as a new key value set and don't need to be escaped as the provider will do it. This departure from the behaviour of the `helm` command is motivated by the fact that we cannot use a single `set` block for multiple keys in the provider
 
 ## Attributes Reference
 
 In addition to the arguments listed above, the following computed attributes are
 exported:
 
+* `status` - Status of the release.
 * `metadata` - Block status of the deployed release.
+* `overrides` - YAML document representing the overriden values passed to the chart. It contains combined values from `values`, `set`, `set_secret` and `set_string` attributes.
 
-The `metadata` block supports:
+The `metadata` block contains the following keys:
 
 * `chart` - The name of the chart.
 * `name` - Name is the name of the release.
 * `namespace` - Namespace is the kubernetes namespace of the release.
 * `revision` - Version is an int32 which represents the version of the release.
-* `status` - Status of the release.
 * `version` - A SemVer 2 conformant version string of the chart.
-* `values` - The compounded values from `values` and `set*` attributes.
 
 ## Import
 
